@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Planning Weather Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+    #flight-map {
+        height: 500px;
+        width: 100%;
+        border-radius: var(--border-radius);
+        margin: 20px 0;
+        box-shadow: var(--shadow);
+        z-index: 1;
+    }
+    .map-container {
+        position: relative;
+    }
+    .map-overlay {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        z-index: 1000;
+        background: rgba(255, 255, 255, 0.9);
+        padding: 10px 15px;
+        border-radius: var(--border-radius);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    .leaflet-popup-content {
+        min-width: 200px;
+    }
+    .leaflet-popup-content-wrapper {
+        border-radius: var(--border-radius) !important;
+    }
+</style>
+
+
+
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1><i class="fas fa-route"></i> Flight Planning Weather Dashboard</h1>
+            <p>Get weather reports for each stop along your flight path</p>
+        </header>
+
+        <div class="search-box">
+            <form method="POST">
+                <div class="form-group">
+                    <label for="num_stops">Number of Stops (including destination):</label>
+                    <input type="number" id="num_stops" name="num_stops" 
+                           min="1" max="10" value="{{ num_stops if num_stops else 1 }}" required>
+                    <button type="submit">Continue</button>
+                </div>
+
+                {% if num_stops and num_stops > 0 %}
+                <div class="stops-form">
+                    <h3>Enter Airport Details:</h3>
+                    {% for i in range(num_stops) %}
+                    <div class="stop-input">
+                        <label for="airport_id_{{ i }}">Stop {{ i+1 }} Airport Code:</label>
+                        <input type="text" id="airport_id_{{ i }}" name="airport_id_{{ i }}" 
+                               pattern="[A-Za-z]{4}" title="4-letter airport code" required>
+                        
+                        <label for="altitude_{{ i }}">Cruising Altitude (ft):</label>
+                        <input type="number" id="altitude_{{ i }}" name="altitude_{{ i }}" 
+                               min="0" max="50000" required>
+                    </div>
+                    {% endfor %}
+                    <button type="submit">Get Weather Reports</button>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+
+        {% if error %}
+        <div class="error-message">
+            <i class="fas fa-exclamation-circle"></i> {{ error }}
+        </div>
+        {% endif %}
+
+        {% if stops %}
+        <div class="flight-path">
+            <h2><i class="fas fa-plane"></i> Flight Path Overview</h2>
+            <div class="path-visualization">
+                {% for stop in stops %}
+                <div class="path-stop">
+                    <div class="stop-marker">
+                        <span class="stop-number">{{ loop.index }}</span>
+                        <span class="airport-code">{{ stop.airport_id }}</span>
+                        <span class="altitude">{{ stop.altitude }} ft</span>
+                    </div>
+                    {% if not loop.last %}
+                    <div class="path-segment">
+                        <i class="fas fa-arrow-right"></i>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+
+	<div class="map-container">
+    		<div id="flight-map"></div>
+    		<div class="map-overlay">
+        		<h4><i class="fas fa-map-marked-alt"></i> Flight Path Map</h4>
+        		<p>Click on airport markers for weather details</p>
+    		</div>
+	</div>
+
+
+        <div class="weather-reports">
+            {% for stop in stops %}
+            <div class="stop-report">
+                <h3><i class="fas fa-map-marker-alt"></i> Stop {{ loop.index }}: {{ stop.airport_id }} (Cruising: {{ stop.altitude }} ft)</h3>
+                
+                {% if stop.metar %}
+                <div class="weather-card metar">
+                    <div class="card-header">
+                        <h4><i class="fas fa-plane-arrival"></i> METAR for {{ stop.metar.decoded.station if stop.metar.decoded else stop.airport_id }}</h4>
+                        <span class="timestamp">{{ stop.metar.timestamp }}</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="raw-data">
+                            <h5><i class="fas fa-code"></i> Raw METAR</h5>
+                            <code>{{ stop.metar.raw }}</code>
+                        </div>
+                        {% if stop.metar.decoded %}
+                        <div class="decoded-data">
+                            <h5><i class="fas fa-info-circle"></i> Current Conditions</h5>
+                            <div class="data-grid">
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-clock"></i> Time:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.time }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-wind"></i> Wind:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.wind }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-eye"></i> Visibility:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.visibility }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-cloud"></i> Clouds:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.clouds }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-temperature-high"></i> Temp:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.temperature }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-tachometer-alt"></i> Pressure:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.pressure }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-cloud-rain"></i> Weather:</span>
+                                    <span class="data-value">{{ stop.metar.decoded.weather }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if stop.taf %}
+                <div class="weather-card taf">
+                    <div class="card-header">
+                        <h4><i class="fas fa-plane-departure"></i> TAF for {{ stop.airport_id }}</h4>
+                        <span class="timestamp">{{ stop.taf.timestamp }}</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="raw-data">
+                            <h5><i class="fas fa-code"></i> Raw TAF</h5>
+                            <code>{{ stop.taf.raw }}</code>
+                        </div>
+                        {% if stop.taf.decoded %}
+                        <div class="decoded-data">
+                            <h5><i class="fas fa-info-circle"></i> Forecast</h5>
+                            <div class="data-grid">
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-calendar-alt"></i> Period:</span>
+                                    <span class="data-value">{{ stop.taf.decoded.forecast_period }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-wind"></i> Wind:</span>
+                                    <span class="data-value">{{ stop.taf.decoded.wind }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-eye"></i> Visibility:</span>
+                                    <span class="data-value">{{ stop.taf.decoded.visibility }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-cloud"></i> Clouds:</span>
+                                    <span class="data-value">{{ stop.taf.decoded.clouds }}</span>
+                                </div>
+                                <div class="data-item">
+                                    <span class="data-label"><i class="fas fa-cloud-rain"></i> Weather:</span>
+                                    <span class="data-value">{{ stop.taf.decoded.weather }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <footer class="footer">
+            <p>&copy; {{ current_year }} Flight Planning Weather Dashboard. Data provided by <a href="https://aviationweather.gov" target="_blank">Aviation Weather Center</a>.</p>
+        </footer>
+    </div>
+</body>
+
+
+<script>
+    // Initialize the map
+    const map = L.map('flight-map').setView([{{ map_center[0] }}, {{ map_center[1] }}], 3);
+    
+    // Add tile layer (OpenStreetMap)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+    }).addTo(map);
+    
+    // Create a feature group for flight path
+    const flightPath = L.featureGroup().addTo(map);
+    
+    // Add markers for each stop
+    {% for stop in stops %}
+    (function() {
+        const marker = L.marker([{{ stop.latitude }}, {{ stop.longitude }}], {
+            title: 'Stop {{ loop.index }}: {{ stop.airport_id }} ({{ stop.altitude }}ft)',
+            riseOnHover: true
+        }).addTo(map);
+        
+        // Custom numbered icon
+        const icon = L.divIcon({
+            className: 'number-icon',
+            html: '<div class="number-marker">{{ loop.index }}</div>',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+        marker.setIcon(icon);
+        
+        // Popup content
+        const popupContent = `
+            <div class="map-popup">
+                <h3>{{ stop.airport_id }}</h3>
+                <p><strong>Stop {{ loop.index }}</strong> ({{ stop.altitude }}ft)</p>
+                {% if stop.metar %}
+                <div class="weather-summary">
+                    <p><i class="fas fa-wind"></i> <strong>Wind:</strong> {{ stop.metar.decoded.wind if stop.metar.decoded else 'N/A' }}</p>
+                    <p><i class="fas fa-eye"></i> <strong>Visibility:</strong> {{ stop.metar.decoded.visibility if stop.metar.decoded else 'N/A' }}</p>
+                    <p><i class="fas fa-cloud"></i> <strong>Weather:</strong> {{ stop.metar.decoded.weather if stop.metar.decoded else 'N/A' }}</p>
+                    <a href="#stop-{{ loop.index }}" class="popup-link">Full report &raquo;</a>
+                </div>
+                {% endif %}
+            </div>
+        `;
+        
+        marker.bindPopup(popupContent, {
+            maxWidth: 300,
+            className: 'custom-popup'
+        });
+        
+        // Add to flight path
+        flightPath.addLayer(marker);
+    })();
+    {% endfor %}
+    
+    // Draw flight path if we have multiple stops
+    {% if stops|length > 1 %}
+    const pathCoordinates = [
+        {% for stop in stops %}
+        [{{ stop.latitude }}, {{ stop.longitude }}]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    ];
+    
+    L.polyline(pathCoordinates, {
+        color: '#e74c3c',
+        weight: 3,
+        opacity: 0.7,
+        dashArray: '5, 5',
+        lineJoin: 'round'
+    }).addTo(map);
+    
+    // Fit map to show all markers
+    map.fitBounds(flightPath.getBounds(), { padding: [50, 50] });
+    {% endif %}
+</script>
+
+
+
+</html>
